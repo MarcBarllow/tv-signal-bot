@@ -11,7 +11,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")      # chat_id канала (-1
 TV_WEBHOOK_SECRET = os.getenv("TV_WEBHOOK_SECRET")    # секрет, например "dessston"
 
 # ----------------- Обработчик POST -----------------
-@app.post("/")  # обработка POST на корень URL
+@app.post("/tv")
 async def webhook(request: Request):
     data = await request.json()
 
