@@ -23,3 +23,9 @@ async def webhook(request: Request):
     requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": message})
 
     return {"status": "ok"}
+# -------------------- Ping endpoint --------------------
+@app.post("/ping")
+async def ping_endpoint(request: Request):
+    data = await request.json()
+    print("Ping received:", data)  # логируем ping, Telegram не трогаем
+    return {"status": "ok"}
