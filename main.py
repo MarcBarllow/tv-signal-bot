@@ -9,24 +9,26 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 TV_WEBHOOK_SECRET = os.getenv("TV_WEBHOOK_SECRET")  # dessston
 
-ADMIN_IDS = [8200781854, 885033881] 
+ADMIN_IDS = [8200781854, 885033881]
 bot_enabled = True
 
-# -------------------- Состояние монет --------------------
-MONETES_STATE = {
-    # Main
-    "BTCUSDT.P": True, "ETHUSDT.P": True, "SOLUSDT.P": True, "XRPUSDT.P": True,
-    # DEFI
-    "AAVEUSDT.P": True, "ENAUSDT.P": True, "HYPEUSDT.P": True, "JTOUSDT.P": True, "JUPUSDT.P": True, "LDOUSDT.P": True, "LINKUSDT.P": True, "UNIUSDT.P": True,
-    # Meme
-    "1000PEPEUSDT.P": True, "DOGEUSDT.P": True, "FARTCOINUSDT.P": True, "ORDIUSDT.P": True, "PENGUUSDT.P": True, "POPCATUSDT.P": True, "PUMPUSDT.P": True, "WIFUSDT.P": True,
-    # AI
-    "AI16ZUSDT.P": True, "ARCUSDT.P": True, "FHEUSDT.P": True, "API3USDT.P": True,
-    # Layer 1 & 2
-    "APTUSDT.P": True, "AVAXUSDT.P": True, "BCHUSDT.P": True, "BNBUSDT.P": True, "OPUSDT.P": True, "SEIUSDT.P": True, "SUIUSDT.P": True, "TIAUSDT.P": True, "WLDUSDT.P": True,
-    # Lst
-    "LDOUSDT.P": True, "LAYERUSDT.P": True, "FXSUSDT.P": True
+# Статус монет (True = активна, False = отключена)
+coin_status = {}
+
+# -------------------- Список монет по секциям --------------------
+sections = {
+    "Main": ["BTCUSDT.P", "ETHUSDT.P", "SOLUSDT.P", "XRPUSDT.P"],
+    "DEFI": ["AAVEUSDT.P","ENAUSDT.P","HYPEUSDT.P","JTOUSDT.P","JUPUSDT.P","LDOUSDT.P","LINKUSDT.P","UNIUSDT.P"],
+    "Meme": ["1000PEPEUSDT.P","DOGEUSDT.P","FARTCOINUSDT.P","ORDIUSDT.P","PENGUUSDT.P","POPCATUSDT.P","PUMPUSDT.P","WIFUSDT.P"],
+    "AI": ["AI16ZUSDT.P","ARCUSDT.P","FHEUSDT.P","API3USDT.P"],
+    "Layer1&2": ["APTUSDT.P","AVAXUSDT.P","BCHUSDT.P","BNBUSDT.P","OPUSDT.P","SEIUSDT.P","SUIUSDT.P","TIAUSDT.P","WLDUSDT.P"],
+    "Lst": ["LDOUSDT.P","LAYERUSDT.P","FXSUSDT.P"]
 }
+
+# Инициализация статуса монет
+for sec_coins in sections.values():
+    for coin in sec_coins:
+        coin_status[coin] = True
 
 # -------------------- Функция отправки сообщений --------------------
 def send_telegram(chat_id, text, reply_markup=None):
@@ -36,25 +38,53 @@ def send_telegram(chat_id, text, reply_markup=None):
         data["reply_markup"] = json.dumps(reply_markup)
     requests.post(url, data=data)
 
+# -------------------- Клавиатуры --------------------
+def build_main_keyboard():
+    keyboard = [
+        [
+            {"text": "Bot On ✅", "callback_data": "enable"},
+            {"text": "Bot Off ❌", "callback_data": "disable"},
+            {"text": "Status ℹ️", "callback_data": "status"}
+        ],
+        [
+            {"text": "Tokens 🎯", "callback_data": "tokens"}
+        ]
+    ]
+    return {"inline_keyboard": keyboard}
+
+def build_tokens_keyboard(section=None):
+    keyboard = []
+    if section is None:
+        # Главное меню секций
+        row = []
+        for sec in sections.keys():
+            row.append({"text": sec, "callback_data": f"section_{sec}"})
+            if len(row) >= 3:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+        keyboard.append([{"text": "Back ⬅️", "callback_data": "back"}])
+    else:
+        # Кнопки монет конкретной секции
+        row = []
+        for coin in sections[section]:
+            emoji = "✅" if coin_status.get(coin, True) else "❌"
+            row.append({"text": f"{coin} {emoji}", "callback_data": f"coin_{coin}"})
+            if len(row) >= 3:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+        keyboard.append([{"text": "Back ⬅️", "callback_data": "tokens"}])
+    return {"inline_keyboard": keyboard}
+
 # -------------------- Панель управления --------------------
 def send_control_panel():
-    keyboard = {
-        "inline_keyboard": [
-            [{"text": "Bot On ✅", "callback_data": "enable"}, 
-             {"text": "Bot Off ❌", "callback_data": "disable"},
-             {"text": "Status ℹ️", "callback_data": "status"}],
-            [{"text": "Main", "callback_data": "section_Main"},
-             {"text": "DEFI", "callback_data": "section_DEFI"},
-             {"text": "Meme", "callback_data": "section_Meme"},
-             {"text": "AI", "callback_data": "section_AI"},
-             {"text": "Layer 1 & 2", "callback_data": "section_Layer"},
-             {"text": "Lst", "callback_data": "section_Lst"}]
-        ]
-    }
     for admin_id in ADMIN_IDS:
-        send_telegram(admin_id, "Управление ботом:", reply_markup=keyboard)
+        send_telegram(admin_id, "Управление ботом:", reply_markup=build_main_keyboard())
 
-# -------------------- Обработчик сигналов TradingView --------------------
+# -------------------- Обработчик сигналов от TradingView --------------------
 @app.api_route("/tv-signal", methods=["POST"])
 async def webhook(request: Request):
     global bot_enabled
@@ -63,10 +93,9 @@ async def webhook(request: Request):
     if "secret" not in data or data["secret"] != TV_WEBHOOK_SECRET:
         return {"status": "error", "message": "Invalid secret"}
 
-    symbol = data["symbol"]
-    message = f"{symbol} | {data['interval']} | {data['signal']} | Price: {data['price']}"
-
-    if bot_enabled and MONETES_STATE.get(symbol, False):
+    coin = data["symbol"]
+    if bot_enabled and coin_status.get(coin, True):
+        message = f"{data['symbol']} | {data['interval']} | {data['signal']} | Price: {data['price']}"
         send_telegram(TELEGRAM_CHAT_ID, message)
         print("Сигнал отправлен:", message)
     else:
@@ -74,7 +103,7 @@ async def webhook(request: Request):
 
     return {"status": "ok"}
 
-# -------------------- Ping --------------------
+# -------------------- Ping endpoint --------------------
 @app.post("/ping")
 async def ping_endpoint(request: Request):
     data = await request.json()
@@ -87,7 +116,11 @@ async def bot_control(request: Request):
     global bot_enabled
     data = await request.json()
 
-    # Callback от кнопок
+    chat_id = None
+    user_id = None
+    action = None
+
+    # Обработка callback кнопок
     if "callback_query" in data:
         query = data["callback_query"]
         chat_id = query["message"]["chat"]["id"]
@@ -98,57 +131,33 @@ async def bot_control(request: Request):
             send_telegram(chat_id, "⛔ У вас нет прав управления ботом.")
             return {"ok": True}
 
-        # Основное управление ботом
+        # Вкл/Выкл/Статус
         if action == "enable":
             bot_enabled = True
-            send_telegram(chat_id, "✅ Бот включен. Сигналы отправляются.")
         elif action == "disable":
             bot_enabled = False
-            send_telegram(chat_id, "⛔ Бот выключен. Сигналы не отправляются.")
         elif action == "status":
             status = "включен ✅" if bot_enabled else "выключен ⛔"
             send_telegram(chat_id, f"Статус бота: {status}")
-
-        # Секции монет
+        elif action == "tokens":
+            send_telegram(chat_id, "Выберите секцию:", reply_markup=build_tokens_keyboard())
         elif action.startswith("section_"):
-            section_name = action.split("_")[1]
-            keyboard = []
-            # Фильтруем монеты по секции
-            for sym in MONETES_STATE:
-                if section_name == "Main" and sym in ["BTCUSDT.P","ETHUSDT.P","SOLUSDT.P","XRPUSDT.P"]:
-                    state = "✅" if MONETES_STATE[sym] else "❌"
-                    keyboard.append([{"text": f"{sym} {state}", "callback_data": f"toggle_{sym}"}])
-                elif section_name == "DEFI" and sym in ["AAVEUSDT.P","ENAUSDT.P","HYPEUSDT.P","JTOUSDT.P","JUPUSDT.P","LDOUSDT.P","LINKUSDT.P","UNIUSDT.P"]:
-                    state = "✅" if MONETES_STATE[sym] else "❌"
-                    keyboard.append([{"text": f"{sym} {state}", "callback_data": f"toggle_{sym}"}])
-                elif section_name == "Meme" and sym in ["1000PEPEUSDT.P","DOGEUSDT.P","FARTCOINUSDT.P","ORDIUSDT.P","PENGUUSDT.P","POPCATUSDT.P","PUMPUSDT.P","WIFUSDT.P"]:
-                    state = "✅" if MONETES_STATE[sym] else "❌"
-                    keyboard.append([{"text": f"{sym} {state}", "callback_data": f"toggle_{sym}"}])
-                elif section_name == "AI" and sym in ["AI16ZUSDT.P","ARCUSDT.P","FHEUSDT.P","API3USDT.P"]:
-                    state = "✅" if MONETES_STATE[sym] else "❌"
-                    keyboard.append([{"text": f"{sym} {state}", "callback_data": f"toggle_{sym}"}])
-                elif section_name == "Layer" and sym in ["APTUSDT.P","AVAXUSDT.P","BCHUSDT.P","BNBUSDT.P","OPUSDT.P","SEIUSDT.P","SUIUSDT.P","TIAUSDT.P","WLDUSDT.P"]:
-                    state = "✅" if MONETES_STATE[sym] else "❌"
-                    keyboard.append([{"text": f"{sym} {state}", "callback_data": f"toggle_{sym}"}])
-                elif section_name == "Lst" and sym in ["LDOUSDT.P","LAYERUSDT.P","FXSUSDT.P"]:
-                    state = "✅" if MONETES_STATE[sym] else "❌"
-                    keyboard.append([{"text": f"{sym} {state}", "callback_data": f"toggle_{sym}"}])
-
-            # Кнопка назад
-            keyboard.append([{"text": "Назад ⬅️", "callback_data": "back"}])
-            send_telegram(chat_id, f"Монеты секции {section_name}:", reply_markup={"inline_keyboard": keyboard})
-
-        # Toggle монет
-        elif action.startswith("toggle_"):
-            sym = action.split("_")[1]
-            MONETES_STATE[sym] = not MONETES_STATE[sym]
-            state = "включена ✅" if MONETES_STATE[sym] else "выключена ❌"
-            send_telegram(chat_id, f"{sym} теперь {state}")
-
+            sec_name = action.replace("section_", "")
+            send_telegram(chat_id, f"Секция {sec_name}:", reply_markup=build_tokens_keyboard(sec_name))
+        elif action.startswith("coin_"):
+            coin_name = action.replace("coin_", "")
+            coin_status[coin_name] = not coin_status[coin_name]  # переключаем статус
+            sec_name = None
+            for sec, coins in sections.items():
+                if coin_name in coins:
+                    sec_name = sec
+                    break
+            if sec_name:
+                send_telegram(chat_id, f"Секция {sec_name}:", reply_markup=build_tokens_keyboard(sec_name))
         elif action == "back":
-            send_control_panel()
+            send_telegram(chat_id, "Главное меню:", reply_markup=build_main_keyboard())
 
-    # Текстовые команды
+    # Обработка текстовых команд
     elif "message" in data and "text" in data["message"]:
         chat_id = data["message"]["chat"]["id"]
         user_id = data["message"]["from"]["id"]
@@ -159,21 +168,19 @@ async def bot_control(request: Request):
 
         if text == "/on":
             bot_enabled = True
-            send_telegram(chat_id, "✅ Бот включен. Сигналы отправляются.")
         elif text == "/off":
             bot_enabled = False
-            send_telegram(chat_id, "⛔ Бот выключен. Сигналы не отправляются.")
         elif text == "/status":
             status = "включен ✅" if bot_enabled else "выключен ⛔"
             send_telegram(chat_id, f"Статус бота: {status}")
         elif text == "/tokens":
-            send_control_panel()
+            send_telegram(chat_id, "Выберите секцию:", reply_markup=build_tokens_keyboard())
         else:
-            send_telegram(chat_id, "Команды: /on — включить, /off — выключить, /status — статус, /tokens — управление монетами")
+            send_telegram(chat_id, "Команды: /on, /off, /status, /tokens")
 
     return {"ok": True}
 
-# -------------------- При старте --------------------
+# -------------------- При запуске отправляем панель управления --------------------
 @app.on_event("startup")
 async def startup_event():
     send_control_panel()
