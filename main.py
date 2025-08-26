@@ -27,20 +27,17 @@ def send_telegram(chat_id, text):
 # -------------------- Получение объёмов с Binance --------------------
 def get_binance_volumes(symbol, interval):
     try:
-        # Spot klines
+        # Spot
         klines = client.get_klines(symbol=symbol.replace(".P", ""), interval=interval, limit=1)
-        if not klines:
-            return 0, 0, 0, 0
+        spot_vol = float(klines[0][5]) if klines else 0
 
-        spot_vol = float(klines[0][5])
-
-        # Futures klines
+        # Futures
         futures_klines = client.futures_klines(symbol=symbol.replace(".P", ""), interval=interval, limit=1)
         futures_vol = float(futures_klines[0][5]) if futures_klines else 0
 
         # Соотношение S/B (по свечам)
-        buy_vol = max(float(klines[0][2]) - float(klines[0][1]), 0)
-        sell_vol = max(float(klines[0][1]) - float(klines[0][2]), 0)
+        buy_vol = max(float(klines[0][2]) - float(klines[0][1]), 0) if klines else 0
+        sell_vol = max(float(klines[0][1]) - float(klines[0][2]), 0) if klines else 0
         total = buy_vol + sell_vol if buy_vol + sell_vol > 0 else 1
         buy_percent = round(buy_vol / total * 100)
         sell_percent = round(sell_vol / total * 100)
@@ -49,7 +46,7 @@ def get_binance_volumes(symbol, interval):
 
     except Exception as e:
         print("Error getting Binance volumes:", e)
-        return 0, 0, 0, 0
+        return 0,0,0,0
 
 # -------------------- Вычисление Unusual Activity --------------------
 def get_unusual_activity(symbol, current_time):
@@ -72,7 +69,7 @@ async def tv_signal(request: Request):
     interval = data.get("interval")
     signal = data.get("signal")
     price = data.get("price")
-    signal_time_str = data.get("time")  # ISO format
+    signal_time_str = data.get("time")  
 
     try:
         signal_time = datetime.fromisoformat(signal_time_str.replace("Z", "+00:00")).astimezone(timezone.utc)
@@ -90,8 +87,8 @@ async def tv_signal(request: Request):
     message = (
         f"{symbol} | {interval} | {signal.upper()}{signal_emoji}\n"
         f"Price: {price}\n"
-        f"Spot Vol: {spot_vol}(↑?)\n"
-        f"Futures Vol: {futures_vol}(↑?)\n"
+        f"Spot Vol: {spot_vol}\n"
+        f"Futures Vol: {futures_vol}\n"
         f"Unusual Activity: {unusual_activity}\n"
         f"S/B: {buy_percent}/{sell_percent}"
     )
