@@ -27,17 +27,20 @@ def send_telegram(chat_id, text):
 # -------------------- Получение объёмов с Binance --------------------
 def get_binance_volumes(symbol, interval):
     try:
-        # Spot vol
+        # Spot klines
         klines = client.get_klines(symbol=symbol.replace(".P", ""), interval=interval, limit=1)
-        spot_vol = float(klines[0][5]) if klines else 0
+        if not klines:
+            return 0, 0, 0, 0
 
-        # Futures vol
+        spot_vol = float(klines[0][5])
+
+        # Futures klines
         futures_klines = client.futures_klines(symbol=symbol.replace(".P", ""), interval=interval, limit=1)
         futures_vol = float(futures_klines[0][5]) if futures_klines else 0
 
         # Соотношение S/B (по свечам)
-        buy_vol = float(klines[0][2]) - float(klines[0][1]) if float(klines[0][2]) > float(klines[0][1]) else 0
-        sell_vol = float(klines[0][1]) - float(klines[0][2]) if float(klines[0][1]) > float(klines[0][2]) else 0
+        buy_vol = max(float(klines[0][2]) - float(klines[0][1]), 0)
+        sell_vol = max(float(klines[0][1]) - float(klines[0][2]), 0)
         total = buy_vol + sell_vol if buy_vol + sell_vol > 0 else 1
         buy_percent = round(buy_vol / total * 100)
         sell_percent = round(sell_vol / total * 100)
@@ -52,7 +55,6 @@ def get_binance_volumes(symbol, interval):
 def get_unusual_activity(symbol, current_time):
     if symbol in last_signal_time:
         delta_seconds = (current_time - last_signal_time[symbol]).total_seconds()
-        # Здесь можно добавить расчёт по объёму между сигналами (BOS или свечи)
         unusual = f"+{int(delta_seconds)}s"
     else:
         unusual = ""
@@ -88,8 +90,8 @@ async def tv_signal(request: Request):
     message = (
         f"{symbol} | {interval} | {signal.upper()}{signal_emoji}\n"
         f"Price: {price}\n"
-        f"Spot Vol: {spot_vol} (↑?)\n"
-        f"Futures Vol: {futures_vol} (↑?)\n"
+        f"Spot Vol: {spot_vol}(↑?)\n"
+        f"Futures Vol: {futures_vol}(↑?)\n"
         f"Unusual Activity: {unusual_activity}\n"
         f"S/B: {buy_percent}/{sell_percent}"
     )
