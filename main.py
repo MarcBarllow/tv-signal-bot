@@ -1,141 +1,110 @@
 from fastapi import FastAPI, Request
 import os
 import requests
+from binance.client import Client
+from datetime import datetime, timezone
 import json
-from datetime import datetime, timezone, timedelta
 
 app = FastAPI()
 
+# -------------------- Конфиги --------------------
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 TV_WEBHOOK_SECRET = os.getenv("TV_WEBHOOK_SECRET")  # dessston
 
-ADMIN_IDS = [8200781854, 885033881]
-bot_enabled = True
+BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
+BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET")
+
+client = Client(BINANCE_API_KEY, BINANCE_API_SECRET)
+
+last_signal_time = {}  # {symbol: datetime}
 
 # -------------------- Функция отправки сообщений --------------------
-def send_telegram(chat_id, text, reply_markup=None):
+def send_telegram(chat_id, text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {"chat_id": chat_id, "text": text}
-    if reply_markup:
-        data["reply_markup"] = json.dumps(reply_markup)
-    requests.post(url, data=data)
+    requests.post(url, data={"chat_id": chat_id, "text": text})
 
-# -------------------- Панель управления --------------------
-def send_control_panel():
-    keyboard = {
-        "inline_keyboard": [
-            [
-                {"text": "Bot On ✅", "callback_data": "enable"},
-                {"text": "Bot Off ❌", "callback_data": "disable"},
-                {"text": "Status ℹ️", "callback_data": "status"}
-            ],
-            [
-                {"text": "Tokens: Main", "callback_data": "section_main"},
-                {"text": "DEFI", "callback_data": "section_defi"},
-                {"text": "Meme", "callback_data": "section_meme"},
-                {"text": "AI", "callback_data": "section_ai"},
-                {"text": "Layer 1 & 2", "callback_data": "section_layer"},
-                {"text": "Lst", "callback_data": "section_lst"}
-            ]
-        ]
-    }
-    for admin_id in ADMIN_IDS:
-        send_telegram(admin_id, "Управление ботом:", reply_markup=keyboard)
+# -------------------- Получение объёмов с Binance --------------------
+def get_binance_volumes(symbol, interval):
+    try:
+        klines = client.get_klines(symbol=symbol.replace(".P", ""), interval=interval, limit=1)
+        if not klines:
+            return 0,0,0,0  # Spot Vol, Futures Vol, Buy %, Sell %
+
+        # kline структура: [Open time, Open, High, Low, Close, Volume, ...]
+        close_time = klines[0][6] / 1000
+        open_time = klines[0][0] / 1000
+        volume = float(klines[0][5])
+
+        # Spot vol
+        spot_vol = volume
+
+        # Futures vol
+        # Если хочешь реальный Futures vol, нужно подключать Futures API
+        futures_klines = client.futures_klines(symbol=symbol.replace(".P", ""), interval=interval, limit=1)
+        futures_vol = float(futures_klines[0][5]) if futures_klines else 0
+
+        # Соотношение S/B (по свечам)
+        buy_vol = float(klines[0][2]) - float(klines[0][1]) if float(klines[0][2]) > float(klines[0][1]) else 0
+        sell_vol = float(klines[0][1]) - float(klines[0][2]) if float(klines[0][1]) > float(klines[0][2]) else 0
+        total = buy_vol + sell_vol if buy_vol + sell_vol > 0 else 1
+        buy_percent = round(buy_vol / total * 100)
+        sell_percent = round(sell_vol / total * 100)
+
+        return spot_vol, futures_vol, buy_percent, sell_percent
+
+    except Exception as e:
+        print("Error getting Binance volumes:", e)
+        return 0,0,0,0
+
+# -------------------- Вычисление Unusual Activity --------------------
+def get_unusual_activity(symbol, current_time):
+    if symbol in last_signal_time:
+        delta_seconds = (current_time - last_signal_time[symbol]).total_seconds()
+        # Здесь можно добавить расчёт по объёму между сигналами
+        unusual = f"+{int(delta_seconds)}s"
+    else:
+        unusual = ""
+    last_signal_time[symbol] = current_time
+    return unusual
 
 # -------------------- Обработчик сигналов от TradingView --------------------
-@app.api_route("/tv-signal", methods=["POST"])
-async def webhook(request: Request):
-    global bot_enabled
+@app.post("/tv-signal")
+async def tv_signal(request: Request):
     data = await request.json()
-
     if "secret" not in data or data["secret"] != TV_WEBHOOK_SECRET:
         return {"status": "error", "message": "Invalid secret"}
 
-    # Проверка времени сигнала
-    signal_time_str = data.get("time")
-    if signal_time_str:
-        signal_time = datetime.fromisoformat(signal_time_str.replace("Z", "+00:00"))
-        now_time = datetime.now(timezone.utc)
-        if now_time - signal_time > timedelta(minutes=2):
-            print(f"Сигнал {data['symbol']} игнорирован, слишком старый: {signal_time}")
-            return {"status": "ignored", "message": "Signal too old"}
+    symbol = data.get("symbol")
+    interval = data.get("interval")
+    signal = data.get("signal")
+    price = data.get("price")
+    signal_time_str = data.get("time")  # ISO format
 
-    if bot_enabled:
-        message = f"{data['symbol']} | {data['interval']} | {data['signal']} | Price: {data['price']}"
-        send_telegram(TELEGRAM_CHAT_ID, message)
-        print("Сигнал отправлен:", message)
-    else:
-        print("Сигнал получен, но бот выключен.")
+    try:
+        signal_time = datetime.fromisoformat(signal_time_str.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except:
+        signal_time = datetime.now(timezone.utc)
+
+    # -------------------- Получаем объёмы и соотношение --------------------
+    spot_vol, futures_vol, buy_percent, sell_percent = get_binance_volumes(symbol, interval)
+
+    # -------------------- Unusual Activity --------------------
+    unusual_activity = get_unusual_activity(symbol, signal_time)
+
+    # -------------------- Формируем сообщение --------------------
+    signal_emoji = "⬆️" if "BUY" in signal.upper() else "⬇️"
+    message = (
+        f"{symbol} | {interval} | {signal.upper()}{signal_emoji}|\n"
+        f"Price: {price}\n"
+        f"Spot Vol: {spot_vol}(↑?)\n"
+        f"Futures Vol: {futures_vol}(↑?)\n"
+        f"Unusual Activity: {unusual_activity}\n"
+        f"S/B: {buy_percent}/{sell_percent}"
+    )
+
+    # -------------------- Отправка в Telegram --------------------
+    send_telegram(TELEGRAM_CHAT_ID, message)
+    print("Sent signal:", message)
 
     return {"status": "ok"}
-
-# -------------------- Ping endpoint --------------------
-@app.post("/ping")
-async def ping_endpoint(request: Request):
-    data = await request.json()
-    print("Ping received:", data)
-    return {"status": "ok"}
-
-# -------------------- Управление ботом через команды и кнопки --------------------
-@app.post("/bot-control")
-async def bot_control(request: Request):
-    global bot_enabled
-    data = await request.json()
-
-    # Callback от кнопок
-    if "callback_query" in data:
-        query = data["callback_query"]
-        chat_id = query["message"]["chat"]["id"]
-        user_id = query["from"]["id"]
-        action = query["data"]
-
-        if user_id not in ADMIN_IDS:
-            send_telegram(chat_id, "⛔ У вас нет прав управления ботом.")
-            return {"ok": True}
-
-        if action == "enable":
-            bot_enabled = True
-            send_telegram(chat_id, "✅ Бот включен. Сигналы отправляются.")
-            send_control_panel()
-        elif action == "disable":
-            bot_enabled = False
-            send_telegram(chat_id, "⛔ Бот выключен. Сигналы не отправляются.")
-            send_control_panel()
-        elif action == "status":
-            status = "включен ✅" if bot_enabled else "выключен ⛔"
-            send_telegram(chat_id, f"Статус бота: {status}")
-        # Секции токенов (пример)
-        elif action.startswith("section_"):
-            section = action.replace("section_", "")
-            send_telegram(chat_id, f"Открыта секция: {section}")  # можно тут выводить токены
-
-    # Текстовые команды
-    elif "message" in data and "text" in data["message"]:
-        chat_id = data["message"]["chat"]["id"]
-        user_id = data["message"]["from"]["id"]
-        text = data["message"]["text"].strip().lower()
-
-        if user_id not in ADMIN_IDS:
-            return {"status": "error", "message": "Unauthorized"}
-
-        if text == "/on":
-            bot_enabled = True
-            send_telegram(chat_id, "✅ Бот включен. Сигналы отправляются.")
-            send_control_panel()
-        elif text == "/off":
-            bot_enabled = False
-            send_telegram(chat_id, "⛔ Бот выключен. Сигналы не отправляются.")
-            send_control_panel()
-        elif text == "/status":
-            status = "включен ✅" if bot_enabled else "выключен ⛔"
-            send_telegram(chat_id, f"Статус бота: {status}")
-        else:
-            send_telegram(chat_id, "Команды: /on — включить, /off — выключить, /status — статус")
-
-    return {"ok": True}
-
-# -------------------- При запуске отправляем панель управления --------------------
-@app.on_event("startup")
-async def startup_event():
-    send_control_panel()
