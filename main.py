@@ -29,16 +29,21 @@ def get_binance_volumes(symbol, interval):
     try:
         klines = client.get_klines(symbol=symbol.replace(".P", ""), interval=interval, limit=1)
         if not klines:
-            return 0,0,0,0  # Spot Vol, Futures Vol, Buy %, Sell %
+            return 0, 0, 0, 0  # Spot Vol, Futures Vol, Buy %, Sell %
+
+        # kline структура: [Open time, Open, High, Low, Close, Volume, ...]
+        close_time = klines[0][6] / 1000
+        open_time = klines[0][0] / 1000
+        volume = float(klines[0][5])
 
         # Spot vol
-        spot_vol = float(klines[0][5])
+        spot_vol = volume
 
         # Futures vol
         futures_klines = client.futures_klines(symbol=symbol.replace(".P", ""), interval=interval, limit=1)
         futures_vol = float(futures_klines[0][5]) if futures_klines else 0
 
-        # Соотношение S/B
+        # Соотношение S/B (по свечам)
         buy_vol = float(klines[0][2]) - float(klines[0][1]) if float(klines[0][2]) > float(klines[0][1]) else 0
         sell_vol = float(klines[0][1]) - float(klines[0][2]) if float(klines[0][1]) > float(klines[0][2]) else 0
         total = buy_vol + sell_vol if buy_vol + sell_vol > 0 else 1
@@ -49,7 +54,7 @@ def get_binance_volumes(symbol, interval):
 
     except Exception as e:
         print("Error getting Binance volumes:", e)
-        return 0,0,0,0
+        return 0, 0, 0, 0
 
 # -------------------- Вычисление Unusual Activity --------------------
 def get_unusual_activity(symbol, current_time):
@@ -91,8 +96,8 @@ async def tv_signal(request: Request):
     message = (
         f"{symbol} | {interval} | {signal.upper()}{signal_emoji}|\n"
         f"Price: {price}\n"
-        f"Spot Vol: {spot_vol}\n"
-        f"Futures Vol: {futures_vol}\n"
+        f"Spot Vol: {spot_vol}(↑?)\n"
+        f"Futures Vol: {futures_vol}(↑?)\n"
         f"Unusual Activity: {unusual_activity}\n"
         f"S/B: {buy_percent}/{sell_percent}"
     )
