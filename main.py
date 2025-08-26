@@ -106,12 +106,3 @@ async def tv_signal(request: Request):
 @app.get("/ping")
 async def ping():
     return {"status": "ok"}
-@app.get("/check-binance")
-async def check_binance():
-    try:
-        # Получаем баланс или пару тикеров для проверки
-        account = client.get_account()
-        balances_count = len(account.get('balances', []))
-        return {"status": "ok", "msg": "Connected to Binance", "balances_count": balances_count}
-    except Exception as e:
-        return {"status": "error", "msg": str(e)}
