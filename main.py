@@ -1,129 +1,56 @@
 from fastapi import FastAPI, Request
 import os
 import requests
-import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 app = FastAPI()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 TV_WEBHOOK_SECRET = os.getenv("TV_WEBHOOK_SECRET")  # dessston
-ADMIN_IDS = [8200781854, 885033881]
-bot_enabled = True
-MAX_DELAY_SECONDS = 120  # 2 минуты
 
-# -------------------- Функция отправки сообщений --------------------
-def send_telegram(chat_id, text, reply_markup=None):
+# Максимальный возраст сигнала в минутах
+MAX_SIGNAL_AGE_MIN = 2
+
+# -------------------- Функция отправки сообщений в Telegram --------------------
+def send_telegram(chat_id, text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {"chat_id": chat_id, "text": text}
-    if reply_markup:
-        data["reply_markup"] = json.dumps(reply_markup)
-    requests.post(url, data=data)
-
-
-# -------------------- Панель управления --------------------
-def send_control_panel():
-    keyboard = {
-        "inline_keyboard": [
-            [{"text": "Включить ✅", "callback_data": "enable"}],
-            [{"text": "Выключить ❌", "callback_data": "disable"}],
-            [{"text": "Статус ℹ️", "callback_data": "status"}]
-        ]
-    }
-    for admin_id in ADMIN_IDS:
-        send_telegram(admin_id, "Управление ботом:", reply_markup=keyboard)
-
+    requests.post(url, data={"chat_id": chat_id, "text": text})
 
 # -------------------- Обработчик сигналов от TradingView --------------------
 @app.api_route("/tv-signal", methods=["POST"])
-async def webhook(request: Request):
-    global bot_enabled
+async def tv_signal(request: Request):
     data = await request.json()
 
+    # Проверка секрета
     if "secret" not in data or data["secret"] != TV_WEBHOOK_SECRET:
         return {"status": "error", "message": "Invalid secret"}
 
     # Проверка времени сигнала
-    signal_time_str = data.get("time")
-    if signal_time_str:
-        signal_time = datetime.fromisoformat(signal_time_str.replace("Z", "+00:00"))
-        now = datetime.now(timezone.utc)
-        delta = (now - signal_time).total_seconds()
-        if delta > MAX_DELAY_SECONDS:
-            print(f"Сигнал {data['symbol']} проигнорирован: задержка {delta:.1f} секунд")
-            return {"status": "ignored", "reason": "signal too old"}
+    if "time" not in data:
+        return {"status": "error", "message": "Missing time field"}
 
-    if bot_enabled:
-        message = f"{data['symbol']} | {data['interval']} | {data['signal']} | Price: {data['price']}"
-        send_telegram(TELEGRAM_CHAT_ID, message)
-        print("Сигнал отправлен:", message)
-    else:
-        print("Сигнал получен, но бот выключен.")
+    try:
+        signal_time = datetime.fromisoformat(data["time"].replace("Z", "+00:00"))
+    except Exception:
+        return {"status": "error", "message": "Invalid time format"}
+
+    now = datetime.now(timezone.utc)
+    age = now - signal_time
+    if age > timedelta(minutes=MAX_SIGNAL_AGE_MIN):
+        print(f"Сигнал {data['symbol']} пропущен, старше {MAX_SIGNAL_AGE_MIN} мин: {data}")
+        return {"status": "ok", "message": "Signal too old, ignored"}
+
+    # Формируем сообщение
+    message = f"{data['symbol']} | {data['interval']} | {data['signal']} | Price: {data['price']}"
+    send_telegram(TELEGRAM_CHAT_ID, message)
+    print("Сигнал отправлен:", message)
 
     return {"status": "ok"}
 
-
-# -------------------- Ping endpoint --------------------
+# -------------------- Ping endpoint для тестов --------------------
 @app.post("/ping")
 async def ping_endpoint(request: Request):
     data = await request.json()
     print("Ping received:", data)
     return {"status": "ok"}
-
-
-# -------------------- Управление ботом --------------------
-@app.post("/bot-control")
-async def bot_control(request: Request):
-    global bot_enabled
-    data = await request.json()
-
-    # Обработка callback от кнопок
-    if "callback_query" in data:
-        query = data["callback_query"]
-        chat_id = query["message"]["chat"]["id"]
-        user_id = query["from"]["id"]
-        action = query["data"]
-
-        if user_id not in ADMIN_IDS:
-            send_telegram(chat_id, "⛔ У вас нет прав управления ботом.")
-            return {"ok": True}
-
-        if action == "enable":
-            bot_enabled = True
-            send_telegram(chat_id, "✅ Бот включен. Сигналы отправляются.")
-        elif action == "disable":
-            bot_enabled = False
-            send_telegram(chat_id, "⛔ Бот выключен. Сигналы не отправляются.")
-        elif action == "status":
-            status = "включен ✅" if bot_enabled else "выключен ⛔"
-            send_telegram(chat_id, f"Статус бота: {status}")
-
-    # Обработка текстовых команд
-    elif "message" in data and "text" in data["message"]:
-        chat_id = data["message"]["chat"]["id"]
-        user_id = data["message"]["from"]["id"]
-        text = data["message"]["text"].strip().lower()
-
-        if user_id not in ADMIN_IDS:
-            return {"status": "error", "message": "Unauthorized"}
-
-        if text == "/on":
-            bot_enabled = True
-            send_telegram(chat_id, "✅ Бот включен. Сигналы отправляются.")
-        elif text == "/off":
-            bot_enabled = False
-            send_telegram(chat_id, "⛔ Бот выключен. Сигналы не отправляются.")
-        elif text == "/status":
-            status = "включен ✅" if bot_enabled else "выключен ⛔"
-            send_telegram(chat_id, f"Статус бота: {status}")
-        else:
-            send_telegram(chat_id, "Команды: /on — включить, /off — выключить, /status — статус")
-
-    return {"ok": True}
-
-
-# -------------------- При запуске отправляем панель управления --------------------
-@app.on_event("startup")
-async def startup_event():
-    send_control_panel()
