@@ -2,47 +2,43 @@ from fastapi import FastAPI, Request
 import os
 import requests
 from datetime import datetime, timezone
+import json
 
 app = FastAPI()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-TV_WEBHOOK_SECRET = "dessston"  # фиксированный секрет
+TV_WEBHOOK_SECRET = os.getenv("TV_WEBHOOK_SECRET")  # dessston
 
-bot_enabled = True
-
-
+# -------------------- Отправка сообщений --------------------
 def send_telegram(chat_id, text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     requests.post(url, data={"chat_id": chat_id, "text": text})
 
-
+# -------------------- Обработчик сигналов --------------------
 @app.api_route("/tv-signal", methods=["POST"])
-async def webhook(request: Request):
-    global bot_enabled
+async def tv_signal(request: Request):
     data = await request.json()
 
-    # Проверяем секрет
     if "secret" not in data or data["secret"] != TV_WEBHOOK_SECRET:
         return {"status": "error", "message": "Invalid secret"}
 
-    # Проверяем время сигнала
-    try:
-        tv_time = datetime.fromisoformat(data["time"].replace("Z", "+00:00"))  # ISO8601 в datetime
-        now = datetime.now(timezone.utc)
-        delay = (now - tv_time).total_seconds()
-        if delay > 120:  # более 2 минут задержки
-            print(f"Сигнал отклонен (задержка {delay} сек):", data)
-            return {"status": "ignored", "reason": "too late"}
-    except Exception as e:
-        print("Ошибка парсинга времени:", e)
+    # Фильтр задержки сигналов > 2 минут
+    signal_time = datetime.fromisoformat(data["time"].replace("Z", "+00:00"))
+    now = datetime.now(timezone.utc)
+    if (now - signal_time).total_seconds() > 120:
+        print("Сигнал пропущен из-за задержки:", data)
+        return {"status": "ignored", "message": "Signal too old"}
 
-    # Отправляем сигнал в Telegram, если бот включен
-    if bot_enabled:
-        message = f"{data['symbol']} | {data['interval']} | {data['signal']} | Price: {data['price']}"
-        send_telegram(TELEGRAM_CHAT_ID, message)
-        print("Сигнал отправлен:", message)
-    else:
-        print("Сигнал получен, но бот выключен.")
+    message = f"{data['symbol']} | {data['interval']} | {data['signal']} | Price: {data['price']}"
+    send_telegram(TELEGRAM_CHAT_ID, message)
+    print("Telegram message:", message)
 
+    return {"status": "ok"}
+
+# -------------------- Ping endpoint --------------------
+@app.post("/ping")
+async def ping(request: Request):
+    data = await request.json()
+    print("Ping received:", data)
     return {"status": "ok"}
