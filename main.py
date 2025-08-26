@@ -69,7 +69,11 @@ async def tv_signal(request: Request):
     interval = data.get("interval")
     signal = data.get("signal")
     price = data.get("price")
-    signal_time_str = data.get("time")  
+    signal_time_str = data.get("time") 
+    spot_vol = data.get("spot_vol", "")
+    futures_vol = data.get("futures_vol", "")
+    unusual_activity = data.get("unusual_activity", "")
+    sb = data.get("sb", "")
 
     try:
         signal_time = datetime.fromisoformat(signal_time_str.replace("Z", "+00:00")).astimezone(timezone.utc)
