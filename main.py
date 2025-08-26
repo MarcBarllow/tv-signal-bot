@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 import os
 import requests
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 app = FastAPI()
 
@@ -25,10 +25,19 @@ def send_telegram(chat_id, text, reply_markup=None):
 def send_control_panel():
     keyboard = {
         "inline_keyboard": [
-            [{"text": "Bot On ✅", "callback_data": "enable"}],
-            [{"text": "Bot Off ❌", "callback_data": "disable"}],
-            [{"text": "Status ℹ️", "callback_data": "status"}],
-            [{"text": "Tokens", "callback_data": "tokens"}]
+            [
+                {"text": "Bot On ✅", "callback_data": "enable"},
+                {"text": "Bot Off ❌", "callback_data": "disable"},
+                {"text": "Status ℹ️", "callback_data": "status"}
+            ],
+            [
+                {"text": "Tokens: Main", "callback_data": "section_main"},
+                {"text": "DEFI", "callback_data": "section_defi"},
+                {"text": "Meme", "callback_data": "section_meme"},
+                {"text": "AI", "callback_data": "section_ai"},
+                {"text": "Layer 1 & 2", "callback_data": "section_layer"},
+                {"text": "Lst", "callback_data": "section_lst"}
+            ]
         ]
     }
     for admin_id in ADMIN_IDS:
@@ -47,11 +56,10 @@ async def webhook(request: Request):
     signal_time_str = data.get("time")
     if signal_time_str:
         signal_time = datetime.fromisoformat(signal_time_str.replace("Z", "+00:00"))
-        now = datetime.now(timezone.utc)
-        delta_seconds = (now - signal_time).total_seconds()
-        if delta_seconds > 120:  # 2 минуты
-            print(f"Сигнал устарел на {delta_seconds} секунд, не отправляем.")
-            return {"status": "ok", "message": "Signal too old"}
+        now_time = datetime.now(timezone.utc)
+        if now_time - signal_time > timedelta(minutes=2):
+            print(f"Сигнал {data['symbol']} игнорирован, слишком старый: {signal_time}")
+            return {"status": "ignored", "message": "Signal too old"}
 
     if bot_enabled:
         message = f"{data['symbol']} | {data['interval']} | {data['signal']} | Price: {data['price']}"
@@ -75,7 +83,7 @@ async def bot_control(request: Request):
     global bot_enabled
     data = await request.json()
 
-    # Обработка callback от кнопок
+    # Callback от кнопок
     if "callback_query" in data:
         query = data["callback_query"]
         chat_id = query["message"]["chat"]["id"]
@@ -89,14 +97,20 @@ async def bot_control(request: Request):
         if action == "enable":
             bot_enabled = True
             send_telegram(chat_id, "✅ Бот включен. Сигналы отправляются.")
+            send_control_panel()
         elif action == "disable":
             bot_enabled = False
             send_telegram(chat_id, "⛔ Бот выключен. Сигналы не отправляются.")
+            send_control_panel()
         elif action == "status":
             status = "включен ✅" if bot_enabled else "выключен ⛔"
             send_telegram(chat_id, f"Статус бота: {status}")
+        # Секции токенов (пример)
+        elif action.startswith("section_"):
+            section = action.replace("section_", "")
+            send_telegram(chat_id, f"Открыта секция: {section}")  # можно тут выводить токены
 
-    # Обработка текстовых команд
+    # Текстовые команды
     elif "message" in data and "text" in data["message"]:
         chat_id = data["message"]["chat"]["id"]
         user_id = data["message"]["from"]["id"]
@@ -108,9 +122,11 @@ async def bot_control(request: Request):
         if text == "/on":
             bot_enabled = True
             send_telegram(chat_id, "✅ Бот включен. Сигналы отправляются.")
+            send_control_panel()
         elif text == "/off":
             bot_enabled = False
             send_telegram(chat_id, "⛔ Бот выключен. Сигналы не отправляются.")
+            send_control_panel()
         elif text == "/status":
             status = "включен ✅" if bot_enabled else "выключен ⛔"
             send_telegram(chat_id, f"Статус бота: {status}")
