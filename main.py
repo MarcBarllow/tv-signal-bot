@@ -29,23 +29,18 @@ def get_binance_volumes(symbol, interval):
     try:
         klines = client.get_klines(symbol=symbol.replace(".P", ""), interval=interval, limit=1)
         if not klines:
-            return 0, 0, 0, 0  # Spot Vol, Futures Vol, Buy %, Sell %
-
-        # kline структура: [Open time, Open, High, Low, Close, Volume, ...]
-        close_time = klines[0][6] / 1000
-        open_time = klines[0][0] / 1000
-        volume = float(klines[0][5])
+            return 0, 0, 0, 0
 
         # Spot vol
-        spot_vol = volume
+        spot_vol = float(klines[0][5])
 
         # Futures vol
         futures_klines = client.futures_klines(symbol=symbol.replace(".P", ""), interval=interval, limit=1)
         futures_vol = float(futures_klines[0][5]) if futures_klines else 0
 
         # Соотношение S/B (по свечам)
-        buy_vol = float(klines[0][2]) - float(klines[0][1]) if float(klines[0][2]) > float(klines[0][1]) else 0
-        sell_vol = float(klines[0][1]) - float(klines[0][2]) if float(klines[0][1]) > float(klines[0][2]) else 0
+        buy_vol = max(float(klines[0][2]) - float(klines[0][1]), 0)
+        sell_vol = max(float(klines[0][1]) - float(klines[0][2]), 0)
         total = buy_vol + sell_vol if buy_vol + sell_vol > 0 else 1
         buy_percent = round(buy_vol / total * 100)
         sell_percent = round(sell_vol / total * 100)
@@ -60,8 +55,7 @@ def get_binance_volumes(symbol, interval):
 def get_unusual_activity(symbol, current_time):
     if symbol in last_signal_time:
         delta_seconds = (current_time - last_signal_time[symbol]).total_seconds()
-        # Здесь можно добавить расчёт по объёму между сигналами
-        unusual = f"+{int(delta_seconds)}s"
+        unusual = f"+{int(delta_seconds)}s" if delta_seconds > 0 else ""
     else:
         unusual = ""
     last_signal_time[symbol] = current_time
@@ -78,7 +72,7 @@ async def tv_signal(request: Request):
     interval = data.get("interval")
     signal = data.get("signal")
     price = data.get("price")
-    signal_time_str = data.get("time")  # ISO format
+    signal_time_str = data.get("time")
 
     try:
         signal_time = datetime.fromisoformat(signal_time_str.replace("Z", "+00:00")).astimezone(timezone.utc)
@@ -108,9 +102,7 @@ async def tv_signal(request: Request):
 
     return {"status": "ok"}
 
-# -------------------- Ping endpoint --------------------
-@app.post("/ping")
-async def ping_endpoint(request: Request):
-    data = await request.json()
-    print("Ping received:", data)
+# ---- Пинг для хостинга ----
+@app.get("/ping")
+async def ping():
     return {"status": "ok"}
