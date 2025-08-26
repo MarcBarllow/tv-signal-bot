@@ -18,7 +18,7 @@ BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET")
 client = Client(BINANCE_API_KEY, BINANCE_API_SECRET)
 
 last_signal_time = {}  # {symbol: datetime}
-last_signal_volume = {}  # {symbol: cumulative volume for unusual activity}
+last_signal_volumes = {}  # {symbol: spot_vol}
 
 # -------------------- Функция отправки сообщений --------------------
 def send_telegram(chat_id, text):
@@ -28,15 +28,13 @@ def send_telegram(chat_id, text):
 # -------------------- Получение объёмов с Binance --------------------
 def get_binance_volumes(symbol, interval):
     try:
-        klines = client.get_klines(symbol=symbol.replace(".P", ""), interval=interval, limit=1)
-        if not klines:
-            return 0,0,0,0  # Spot Vol, Futures Vol, Buy %, Sell %
-
+        symbol_clean = symbol.replace(".P", "")
         # Spot vol
-        spot_vol = float(klines[0][5])
+        klines = client.get_klines(symbol=symbol_clean, interval=interval, limit=1)
+        spot_vol = float(klines[0][5]) if klines else 0
 
         # Futures vol
-        futures_klines = client.futures_klines(symbol=symbol.replace(".P", ""), interval=interval, limit=1)
+        futures_klines = client.futures_klines(symbol=symbol_clean, interval=interval, limit=1)
         futures_vol = float(futures_klines[0][5]) if futures_klines else 0
 
         # Соотношение S/B (по свечам)
@@ -52,20 +50,18 @@ def get_binance_volumes(symbol, interval):
 
     except Exception as e:
         print("Error getting Binance volumes:", e)
-        return 0,0,0,0
+        return 0, 0, 0, 0
 
 # -------------------- Вычисление Unusual Activity --------------------
-def get_unusual_activity(symbol, current_volume, current_time):
-    unusual = ""
-    if symbol in last_signal_time:
-        previous_volume = last_signal_volume.get(symbol, 0)
-        delta_vol = current_volume - previous_volume
-        if delta_vol > 0:
-            percent_change = round((delta_vol / previous_volume) * 100) if previous_volume > 0 else 100
-            unusual = f"+{int(delta_vol)} (+{percent_change}%)"
-    last_signal_time[symbol] = current_time
-    last_signal_volume[symbol] = current_volume
-    return unusual
+def get_unusual_activity(symbol, current_spot_vol):
+    unusual_activity = ""
+    if symbol in last_signal_volumes:
+        prev_vol = last_signal_volumes[symbol]
+        diff = current_spot_vol - prev_vol
+        if diff > 0:
+            unusual_activity = f"+{int(diff)}(+{round(diff/prev_vol*100) if prev_vol>0 else 0}%)"
+    last_signal_volumes[symbol] = current_spot_vol
+    return unusual_activity
 
 # -------------------- Обработчик сигналов от TradingView --------------------
 @app.post("/tv-signal")
@@ -89,15 +85,15 @@ async def tv_signal(request: Request):
     spot_vol, futures_vol, buy_percent, sell_percent = get_binance_volumes(symbol, interval)
 
     # -------------------- Unusual Activity --------------------
-    unusual_activity = get_unusual_activity(symbol, spot_vol, signal_time)
+    unusual_activity = get_unusual_activity(symbol, spot_vol)
 
     # -------------------- Формируем сообщение --------------------
     signal_emoji = "⬆️" if "BUY" in signal.upper() else "⬇️"
     message = (
-        f"{symbol} | {interval} | {signal.upper()} {signal_emoji}\n"
+        f"{symbol} | {interval} | {signal.upper()}{signal_emoji}\n"
         f"Price: {price}\n"
-        f"Spot Vol: {spot_vol} (↑?)\n"
-        f"Futures Vol: {futures_vol} (↑?)\n"
+        f"Spot Vol: {spot_vol}(↑?)\n"
+        f"Futures Vol: {futures_vol}(↑?)\n"
         f"Unusual Activity: {unusual_activity}\n"
         f"S/B: {buy_percent}/{sell_percent}"
     )
